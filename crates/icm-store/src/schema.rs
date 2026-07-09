@@ -1,8 +1,9 @@
-use rusqlite::Connection;
+#[allow(unused_imports)]
+use super::sql::{params, Connection};
 
 use icm_core::{IcmError, IcmResult};
 
-use crate::store::db_err;
+use super::store::db_err;
 
 /// Check if a FTS virtual table exists in sqlite_master.
 fn fts_table_exists(conn: &Connection, name: &str) -> Result<bool, IcmError> {
@@ -557,7 +558,7 @@ fn migrate_fts_update_trigger(conn: &Connection) -> IcmResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::test_helpers::ensure_vec_init;
+    use super::store::test_helpers::ensure_vec_init;
 
     #[test]
     fn test_init_db() {
@@ -726,7 +727,7 @@ mod tests {
              (id, created_at, last_accessed, topic, summary, importance, source_type, embedding) \
              VALUES (?1, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', \
                      'drift', 'drifted blob', 'medium', 'manual', ?2)",
-            rusqlite::params![id, blob],
+            params![id, blob],
         )
         .unwrap();
     }

@@ -21,7 +21,7 @@ use icm_core::{
 use crate::common::{CodeArea, HookEvent, HookEventInsert, HookStatsRow, PendingRow};
 
 #[cfg(feature = "backend-sqlite")]
-use crate::store::SqliteStore;
+use crate::sqlite_backend::store::SqliteStore;
 
 #[cfg(feature = "postgres")]
 use crate::postgres::PostgresStore;
@@ -30,7 +30,7 @@ use crate::postgres::PostgresStore;
 use crate::opensearch::OpenSearchStore;
 
 #[cfg(feature = "turso")]
-use crate::turso_store::TursoStore;
+use crate::turso_backend::store::SqliteStore as TursoStore;
 
 /// Which storage backend is active.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,22 +42,56 @@ pub enum BackendKind {
 }
 
 impl BackendKind {
-    /// Resolve the requested backend from `ICM_DB_BACKEND` (default
-    /// `sqlite`). Unknown values are a config error.
+    /// Resolve the active storage backend with the following precedence:
+    ///
+    /// 1. **`ICM_DB_BACKEND` (explicit, always wins)** — set to `sqlite`,
+    ///    `postgres`, `opensearch`, or `turso` / `libsql`. An explicit value
+    ///    overrides everything else, including `TURSO_DATABASE_URL`. Setting
+    ///    `ICM_DB_BACKEND=sqlite` while `TURSO_DATABASE_URL` is set forces the
+    ///    local SQLite file, which is the escape hatch for debugging.
+    ///
+    /// 2. **`TURSO_DATABASE_URL` / `LIBSQL_URL` auto-detect** (turso feature
+    ///    only) — when `ICM_DB_BACKEND` is absent or empty AND one of these
+    ///    URL vars is set and non-empty, the Turso backend is selected
+    ///    automatically. This preserves the production wiring used by Hermes,
+    ///    orchestra, and `modules/icm.nix`, none of which set `ICM_DB_BACKEND`.
+    ///    Gated behind `#[cfg(feature = "turso")]` so a sqlite-only build is
+    ///    never asked to select a backend it wasn't compiled with.
+    ///
+    /// 3. **Default** — `sqlite` (in-process local file, zero config).
     pub fn from_env() -> IcmResult<Self> {
-        match std::env::var("ICM_DB_BACKEND")
+        let explicit = std::env::var("ICM_DB_BACKEND")
             .ok()
-            .as_deref()
-            .map(str::trim)
-        {
-            None | Some("") | Some("sqlite") => Ok(BackendKind::Sqlite),
-            Some("postgres") | Some("postgresql") | Some("pg") => Ok(BackendKind::Postgres),
-            Some("opensearch") | Some("os") => Ok(BackendKind::OpenSearch),
-            Some("turso") | Some("libsql") => Ok(BackendKind::Turso),
-            Some(other) => Err(IcmError::Config(format!(
-                "unknown ICM_DB_BACKEND '{other}' (expected: sqlite, postgres, opensearch, turso)"
-            ))),
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+
+        if let Some(ref val) = explicit {
+            return match val.as_str() {
+                "sqlite" => Ok(BackendKind::Sqlite),
+                "postgres" | "postgresql" | "pg" => Ok(BackendKind::Postgres),
+                "opensearch" | "os" => Ok(BackendKind::OpenSearch),
+                "turso" | "libsql" => Ok(BackendKind::Turso),
+                other => Err(IcmError::Config(format!(
+                    "unknown ICM_DB_BACKEND '{other}' \
+                     (expected: sqlite, postgres, opensearch, turso)"
+                ))),
+            };
         }
+
+        // No explicit override — auto-detect from URL vars (turso feature only).
+        #[cfg(feature = "turso")]
+        {
+            let has_url = std::env::var("TURSO_DATABASE_URL")
+                .or_else(|_| std::env::var("LIBSQL_URL"))
+                .ok()
+                .map(|s| !s.trim().is_empty())
+                .unwrap_or(false);
+            if has_url {
+                return Ok(BackendKind::Turso);
+            }
+        }
+
+        Ok(BackendKind::Sqlite)
     }
 }
 
@@ -746,5 +780,78 @@ impl TranscriptStore for Store {
     }
     fn transcript_stats(&self) -> IcmResult<TranscriptStats> {
         dispatch!(self, transcript_stats())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    // Serialise tests that mutate env vars.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn clear_env() {
+        std::env::remove_var("ICM_DB_BACKEND");
+        std::env::remove_var("TURSO_DATABASE_URL");
+        std::env::remove_var("LIBSQL_URL");
+    }
+
+    /// Case 1: nothing set → Sqlite.
+    #[test]
+    fn default_is_sqlite() {
+        let _g = ENV_LOCK.lock().unwrap();
+        clear_env();
+        assert_eq!(BackendKind::from_env().unwrap(), BackendKind::Sqlite);
+    }
+
+    /// Case 2: TURSO_DATABASE_URL set, ICM_DB_BACKEND unset → Turso auto-detect.
+    #[test]
+    #[cfg(feature = "turso")]
+    fn turso_url_autoselects_turso() {
+        let _g = ENV_LOCK.lock().unwrap();
+        clear_env();
+        std::env::set_var("TURSO_DATABASE_URL", "http://127.0.0.1:8099");
+        let result = BackendKind::from_env().unwrap();
+        std::env::remove_var("TURSO_DATABASE_URL");
+        assert_eq!(result, BackendKind::Turso);
+    }
+
+    /// Case 3: ICM_DB_BACKEND=sqlite wins even when TURSO_DATABASE_URL is set.
+    #[test]
+    #[cfg(feature = "turso")]
+    fn explicit_sqlite_wins_over_url() {
+        let _g = ENV_LOCK.lock().unwrap();
+        clear_env();
+        std::env::set_var("ICM_DB_BACKEND", "sqlite");
+        std::env::set_var("TURSO_DATABASE_URL", "http://127.0.0.1:8099");
+        let result = BackendKind::from_env().unwrap();
+        std::env::remove_var("ICM_DB_BACKEND");
+        std::env::remove_var("TURSO_DATABASE_URL");
+        assert_eq!(result, BackendKind::Sqlite);
+    }
+
+    /// Case 4: explicit ICM_DB_BACKEND=turso selects Turso without any URL.
+    #[test]
+    #[cfg(feature = "turso")]
+    fn explicit_turso_selects_turso() {
+        let _g = ENV_LOCK.lock().unwrap();
+        clear_env();
+        std::env::set_var("ICM_DB_BACKEND", "turso");
+        let result = BackendKind::from_env().unwrap();
+        std::env::remove_var("ICM_DB_BACKEND");
+        assert_eq!(result, BackendKind::Turso);
+    }
+
+    /// LIBSQL_URL alias also triggers auto-detect.
+    #[test]
+    #[cfg(feature = "turso")]
+    fn libsql_url_alias_autoselects_turso() {
+        let _g = ENV_LOCK.lock().unwrap();
+        clear_env();
+        std::env::set_var("LIBSQL_URL", "http://127.0.0.1:8099");
+        let result = BackendKind::from_env().unwrap();
+        std::env::remove_var("LIBSQL_URL");
+        assert_eq!(result, BackendKind::Turso);
     }
 }
