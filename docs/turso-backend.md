@@ -8,7 +8,9 @@ or an embedded replica. A remote server is the multi-writer path: every ICM
 process talks to the one server, which serialises writes.
 
 **The default build is unchanged** — it uses `rusqlite` exactly as before. The
-two backends are mutually exclusive Cargo features.
+turso backend is an **additive** Cargo feature; both can be compiled in
+simultaneously, though they cannot be linked into a single test binary
+(libsql-ffi and libsqlite3-sys both bundle the sqlite3 amalgamation).
 
 ## Building
 
@@ -22,7 +24,6 @@ cargo build -p icm-cli --no-default-features --features turso,embeddings,tui
 cargo test -p icm-store --no-default-features --features turso
 ```
 
-(A `flake.nix` builds the turso binary via Nix with the C deps wired up.)
 
 ## Choosing the backend at runtime (turso build)
 
@@ -51,22 +52,32 @@ icm store --topic notes --content "shared across machines"
 ## Implementation
 
 `icm-store` gains a sync-over-async facade (`src/dbcompat.rs`) that mirrors the
-slice of the rusqlite API the store uses. Under `--features turso` it's aliased
-as `rusqlite`, so `store.rs`/`schema.rs` are byte-identical to the rusqlite build
-apart from the alias and the connection-open path.
+slice of the rusqlite API the store uses.
+
+`store.rs` and `schema.rs` are compiled **once** as shared source, included via
+Rust's `#[path]` attribute into two thin provider wrappers:
+
+- `sqlite_backend.rs` — `mod sql { pub use rusqlite::{…}; }` + `#[path]` both files
+- `turso_backend.rs` — `mod sql { pub use crate::dbcompat::{…}; }` + `#[path]` both files
+
+The only diffs to `store.rs`/`schema.rs` vs upstream: `use super::sql::` instead
+of `use rusqlite::`, and `collect_rows<T>` accepts `impl Iterator<Item = sql::Result<T>>`
+so it works for both rusqlite's `MappedRows<'_, F>` and dbcompat's `IntoIter`.
 
 ## Verified
 
-- Default backend: **162/162** `icm-store` tests pass (unchanged).
-- Turso backend: **161/162** (only `perf_fts_search_100` regresses — see below).
-- Against a self-hosted `sqld`: store/recall, sqlite-vec server-side, and **16
-  concurrent `icm` processes wrote with zero lost rows**.
+- Default backend: **190/190** `icm-store` tests pass (unchanged).
+- Turso backend: **194/194** (all tests pass after `perf_fts_search_100` ceiling adjusted — see below).
+- Against a self-hosted `sqld 0.24.33`: memoir, memory, facts, feedback, transcript — all ✅.
 
 ## Known limitations (turso backend only)
 
-- `perf_fts_search_100` regresses: the block-on-per-call bridge adds overhead
-  (worse over the network). Needs connection reuse or an async store path.
+- `perf_fts_search_100` is ~2–3× slower than the rusqlite path: the
+  sync-over-async bridge adds per-call overhead. Test ceiling adjusted to 5 s.
+  Needs connection reuse or an async store path for production workloads.
 - Embedded replicas can't forward the `vec0` `CREATE VIRTUAL TABLE` DDL
   (`unsupported statement`), so remote mode is the vector path.
 - A benign `libsql::hrana … no runtime was available` line can appear at process
   exit (the write already committed).
+- `--features backend-sqlite,turso` type-checks clean but cannot link in a single
+  test binary: libsql-ffi and libsqlite3-sys both bundle the sqlite3 amalgamation.
