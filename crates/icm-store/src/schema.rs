@@ -558,7 +558,10 @@ fn migrate_fts_update_trigger(conn: &Connection) -> IcmResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use super::store::test_helpers::ensure_vec_init;
+    // `super` here is `sqlite_backend::schema` (or `turso_backend::schema`).
+    // The store module is the sibling of `schema` under the backend wrapper,
+    // so we need one extra `super` step to reach it.
+    use super::super::store::test_helpers::ensure_vec_init;
 
     #[test]
     fn test_init_db() {
