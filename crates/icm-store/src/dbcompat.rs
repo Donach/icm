@@ -36,6 +36,41 @@ fn block_on<F: std::future::Future>(fut: F) -> F::Output {
     }
 }
 
+/// Per-operation deadline for every DB call routed through this facade.
+///
+/// The libsql HTTP client has NO default request timeout, so a stalled
+/// connection (packet loss, wedged server, mid-handshake hang) would block a
+/// synchronous caller — e.g. an editor hook shelling out to `icm` — forever.
+/// `ICM_DB_TIMEOUT` (seconds, default 10, `0` disables) bounds every remote
+/// round-trip; local-file operations are far under the limit and unaffected.
+fn db_timeout() -> Option<std::time::Duration> {
+    static SECS: Lazy<u64> = Lazy::new(|| {
+        std::env::var("ICM_DB_TIMEOUT")
+            .ok()
+            .and_then(|v| v.trim().parse::<u64>().ok())
+            .unwrap_or(10)
+    });
+    (*SECS > 0).then(|| std::time::Duration::from_secs(*SECS))
+}
+
+/// `block_on` + deadline: the error type must be constructible from a
+/// timeout, so this is used for fallible DB futures.
+fn block_on_timeout<T, E, F>(fut: F) -> Result<T>
+where
+    E: Into<Error>,
+    F: std::future::Future<Output = std::result::Result<T, E>>,
+{
+    match db_timeout() {
+        // Construct the timeout future INSIDE the runtime — tokio's Sleep
+        // timer panics if created outside a runtime context.
+        Some(dur) => match block_on(async { tokio::time::timeout(dur, fut).await }) {
+            Ok(res) => res.map_err(Into::into),
+            Err(_elapsed) => Err(Error::Timeout(dur)),
+        },
+        None => block_on(fut).map_err(Into::into),
+    }
+}
+
 // ───────────────────────────── errors ─────────────────────────────
 
 #[derive(Debug)]
@@ -43,6 +78,8 @@ pub enum Error {
     QueryReturnedNoRows,
     FromSqlConversion(String),
     Libsql(libsql::Error),
+    /// A DB operation exceeded `ICM_DB_TIMEOUT` (see `db_timeout`).
+    Timeout(std::time::Duration),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -53,6 +90,11 @@ impl std::fmt::Display for Error {
             Error::QueryReturnedNoRows => write!(f, "Query returned no rows"),
             Error::FromSqlConversion(s) => write!(f, "from-sql conversion error: {s}"),
             Error::Libsql(e) => write!(f, "{e}"),
+            Error::Timeout(d) => write!(
+                f,
+                "database operation timed out after {}s (ICM_DB_TIMEOUT; 0 disables)",
+                d.as_secs()
+            ),
         }
     }
 }
@@ -318,7 +360,7 @@ impl Statement {
         F: FnMut(&Row) -> Result<T>,
     {
         let vals = params.into_values();
-        let rows = block_on(async {
+        let rows = block_on_timeout(async {
             let mut rows = self.conn.query(&self.sql, vals).await?;
             materialize(&mut rows).await
         })?;
@@ -331,7 +373,7 @@ impl Statement {
         F: FnOnce(&Row) -> Result<T>,
     {
         let vals = params.into_values();
-        let rows = block_on(async {
+        let rows = block_on_timeout(async {
             let mut rows = self.conn.query(&self.sql, vals).await?;
             materialize(&mut rows).await
         })?;
@@ -343,7 +385,7 @@ impl Statement {
 
     pub fn execute(&mut self, params: impl Params) -> Result<usize> {
         let vals = params.into_values();
-        Ok(block_on(self.conn.execute(&self.sql, vals))? as usize)
+        Ok(block_on_timeout(self.conn.execute(&self.sql, vals))? as usize)
     }
 }
 
@@ -382,7 +424,7 @@ impl Connection {
 
     /// Remote libSQL/Turso server: every process shares it → concurrent-safe writes.
     pub fn open_remote(url: String, auth_token: String) -> Result<Self> {
-        let db = block_on(async { Builder::new_remote(url, auth_token).build().await })?;
+        let db = block_on_timeout(async { Builder::new_remote(url, auth_token).build().await })?;
         let conn = db.connect()?;
         Ok(Self { db: Arc::new(db), conn: Arc::new(conn), remote: true })
     }
@@ -403,17 +445,17 @@ impl Connection {
     }
 
     pub fn sync(&self) -> Result<()> {
-        block_on(async { self.db.sync().await })?;
+        block_on_timeout(async { self.db.sync().await })?;
         Ok(())
     }
 
     pub fn execute(&self, sql: &str, params: impl Params) -> Result<usize> {
         let vals = params.into_values();
-        Ok(block_on(self.conn.execute(sql, vals))? as usize)
+        Ok(block_on_timeout(self.conn.execute(sql, vals))? as usize)
     }
 
     pub fn execute_batch(&self, sql: &str) -> Result<()> {
-        block_on(async { self.conn.execute_batch(sql).await })?;
+        block_on_timeout(async { self.conn.execute_batch(sql).await })?;
         Ok(())
     }
 

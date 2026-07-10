@@ -31,6 +31,7 @@ cargo test -p icm-store --no-default-features --features turso
 |-----|---------|
 | *(none)* | local SQLite file (`--db` / default path) |
 | `TURSO_DATABASE_URL` (or `LIBSQL_URL`) [+ `TURSO_AUTH_TOKEN`] | remote libSQL/Turso server — recommended for multi-writer |
+| `ICM_DB_TIMEOUT` | per-operation deadline in seconds (default `10`, `0` disables) — a stalled remote connection errors instead of hanging the CLI/hook forever |
 | `…URL` + `ICM_TURSO_REPLICA=1` | local embedded replica syncing to the primary |
 
 ## Self-hosted server with vector search
