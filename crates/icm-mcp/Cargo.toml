@@ -11,6 +11,7 @@ embeddings = ["icm-core/embeddings"]
 backend-sqlite = ["icm-store/backend-sqlite"]
 postgres = ["icm-store/postgres"]
 opensearch = ["icm-store/opensearch"]
+turso = ["icm-store/turso"]
 
 [dependencies]
 icm-core = { path = "../icm-core" }

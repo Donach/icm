@@ -26,6 +26,7 @@ tui = ["dep:ratatui", "dep:crossterm"]
 backend-sqlite = ["icm-store/backend-sqlite", "icm-mcp/backend-sqlite"]
 postgres = ["icm-store/postgres", "icm-mcp/postgres"]
 opensearch = ["icm-store/opensearch", "icm-mcp/opensearch"]
+turso = ["icm-store/turso", "icm-mcp/turso"]
 # Persistent local HTTP server (`icm serve --http`) reusing the warm
 # store + embedder. Lightweight: just axum + tokio. Issue #290.
 http-api = ["dep:axum", "dep:tokio"]

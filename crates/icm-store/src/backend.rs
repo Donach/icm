@@ -2,7 +2,7 @@
 //!
 //! [`Store`] is an enum over the compiled-in backends. The active backend
 //! is chosen at runtime from `ICM_DB_BACKEND` (`sqlite` (default) /
-//! `postgres` / `opensearch`), mirroring SurrealDB's `Surreal<Any>`: a
+//! `postgres` / `opensearch` / `turso`), mirroring SurrealDB's `Surreal<Any>`: a
 //! single binary can carry every backend and pick one without a rebuild.
 //! Cargo features only decide which variants are available.
 
@@ -29,12 +29,16 @@ use crate::postgres::PostgresStore;
 #[cfg(feature = "opensearch")]
 use crate::opensearch::OpenSearchStore;
 
+#[cfg(feature = "turso")]
+use crate::turso_store::TursoStore;
+
 /// Which storage backend is active.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackendKind {
     Sqlite,
     Postgres,
     OpenSearch,
+    Turso,
 }
 
 impl BackendKind {
@@ -49,8 +53,9 @@ impl BackendKind {
             None | Some("") | Some("sqlite") => Ok(BackendKind::Sqlite),
             Some("postgres") | Some("postgresql") | Some("pg") => Ok(BackendKind::Postgres),
             Some("opensearch") | Some("os") => Ok(BackendKind::OpenSearch),
+            Some("turso") | Some("libsql") => Ok(BackendKind::Turso),
             Some(other) => Err(IcmError::Config(format!(
-                "unknown ICM_DB_BACKEND '{other}' (expected: sqlite, postgres, opensearch)"
+                "unknown ICM_DB_BACKEND '{other}' (expected: sqlite, postgres, opensearch, turso)"
             ))),
         }
     }
@@ -65,6 +70,8 @@ pub enum Store {
     Postgres(PostgresStore),
     #[cfg(feature = "opensearch")]
     OpenSearch(OpenSearchStore),
+    #[cfg(feature = "turso")]
+    Turso(TursoStore),
 }
 
 /// Forward a method call to the active backend variant.
@@ -77,6 +84,8 @@ macro_rules! dispatch {
             Store::Postgres(s) => s.$m($($a),*),
             #[cfg(feature = "opensearch")]
             Store::OpenSearch(s) => s.$m($($a),*),
+            #[cfg(feature = "turso")]
+            Store::Turso(s) => s.$m($($a),*),
         }
     };
 }
@@ -141,6 +150,17 @@ impl Store {
                     Err(not_compiled("opensearch"))
                 }
             }
+            BackendKind::Turso => {
+                #[cfg(feature = "turso")]
+                {
+                    Ok(Store::Turso(TursoStore::with_dims(path, embedding_dims)?))
+                }
+                #[cfg(not(feature = "turso"))]
+                {
+                    let _ = (path, embedding_dims);
+                    Err(not_compiled("turso"))
+                }
+            }
         }
     }
 
@@ -178,6 +198,17 @@ impl Store {
                 {
                     let _ = path;
                     Err(not_compiled("opensearch"))
+                }
+            }
+            BackendKind::Turso => {
+                #[cfg(feature = "turso")]
+                {
+                    Ok(Store::Turso(TursoStore::open_readonly(path)?))
+                }
+                #[cfg(not(feature = "turso"))]
+                {
+                    let _ = path;
+                    Err(not_compiled("turso"))
                 }
             }
         }
@@ -231,6 +262,26 @@ impl Store {
                     Err(not_compiled("opensearch"))
                 }
             }
+            BackendKind::Turso => {
+                // Turso remote backend doesn't support in-memory; fall back to
+                // a local libSQL file in a tempdir for testing.
+                #[cfg(feature = "turso")]
+                {
+                    let tmp = std::env::temp_dir().join(format!(
+                        "icm-turso-mem-{}.db",
+                        std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_nanos()
+                    ));
+                    Ok(Store::Turso(TursoStore::with_dims(&tmp, embedding_dims)?))
+                }
+                #[cfg(not(feature = "turso"))]
+                {
+                    let _ = embedding_dims;
+                    Err(not_compiled("turso"))
+                }
+            }
         }
     }
 
@@ -265,6 +316,17 @@ impl Store {
                     OpenSearchStore::read_stored_embedding_dims(path)
                 }
                 #[cfg(not(feature = "opensearch"))]
+                {
+                    let _ = path;
+                    Ok(None)
+                }
+            }
+            BackendKind::Turso => {
+                #[cfg(feature = "turso")]
+                {
+                    TursoStore::read_stored_embedding_dims(path)
+                }
+                #[cfg(not(feature = "turso"))]
                 {
                     let _ = path;
                     Ok(None)
