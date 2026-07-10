@@ -60,6 +60,33 @@
               mainProgram = "icm";
             };
           };
+          # Same source, libSQL/Turso backend instead of rusqlite. A separate
+          # package output because the two backends cannot link into one
+          # binary today: libsql-ffi and libsqlite3-sys both bundle sqlite3
+          # and their symbols collide (see docs/turso-backend.md).
+          icm-turso = self.packages.${system}.icm.overrideAttrs (old: {
+            pname = "icm-turso";
+            buildNoDefaultFeatures = true;
+            buildFeatures = [ "turso" "embeddings" "tui" ];
+            cargoBuildFlags = [ "-p" "icm-cli" ];
+            nativeBuildInputs = old.nativeBuildInputs ++ [ pkgs.makeWrapper ];
+            # onnxruntime (system ORT) is built against this nixpkgs' gcc
+            # libstdc++, newer than the one the Rust toolchain puts first on
+            # the RPATH; without help the binary aborts at startup with
+            # `GLIBCXX_3.4.xx not found (required by libonnxruntime.so)`.
+            postInstall = (old.postInstall or "") + ''
+              wrapProgram $out/bin/icm \
+                --prefix LD_LIBRARY_PATH : ${
+                  pkgs.lib.makeLibraryPath [
+                    pkgs.stdenv.cc.cc.lib
+                    pkgs.onnxruntime
+                  ]
+                }
+            '';
+            meta = old.meta // {
+              description = "ICM with the opt-in libSQL/Turso backend (concurrent multi-writer memory)";
+            };
+          });
           default = self.packages.${system}.icm;
         }
       );
