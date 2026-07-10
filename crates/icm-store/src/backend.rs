@@ -91,6 +91,15 @@ impl BackendKind {
             }
         }
 
+        // No override, no URL: default to the local backend — sqlite when
+        // compiled, else turso (its local-file mode has the same semantics).
+        // A build with neither local-capable backend still resolves to
+        // Sqlite and surfaces the not-compiled error at construction.
+        #[cfg(feature = "backend-sqlite")]
+        return Ok(BackendKind::Sqlite);
+        #[cfg(all(not(feature = "backend-sqlite"), feature = "turso"))]
+        return Ok(BackendKind::Turso);
+        #[cfg(all(not(feature = "backend-sqlite"), not(feature = "turso")))]
         Ok(BackendKind::Sqlite)
     }
 }
@@ -797,12 +806,19 @@ mod tests {
         std::env::remove_var("LIBSQL_URL");
     }
 
-    /// Case 1: nothing set → Sqlite.
+    /// Case 1: nothing set → the local default: sqlite when compiled in,
+    /// else turso (whose local-file mode has the same semantics).
     #[test]
-    fn default_is_sqlite() {
+    fn default_is_local_backend() {
         let _g = ENV_LOCK.lock().unwrap();
         clear_env();
-        assert_eq!(BackendKind::from_env().unwrap(), BackendKind::Sqlite);
+        #[cfg(feature = "backend-sqlite")]
+        let expected = BackendKind::Sqlite;
+        #[cfg(all(not(feature = "backend-sqlite"), feature = "turso"))]
+        let expected = BackendKind::Turso;
+        #[cfg(all(not(feature = "backend-sqlite"), not(feature = "turso")))]
+        let expected = BackendKind::Sqlite;
+        assert_eq!(BackendKind::from_env().unwrap(), expected);
     }
 
     /// Case 2: TURSO_DATABASE_URL set, ICM_DB_BACKEND unset → Turso auto-detect.

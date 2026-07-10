@@ -199,12 +199,11 @@ impl SqliteStore {
             std::fs::create_dir_all(parent)
                 .map_err(|e| IcmError::Database(format!("cannot create db directory: {e}")))?;
         }
-        let conn = Connection::open(path)
-            .map_err(|e| IcmError::Database(format!("cannot open database: {e}")))?;
-        conn.execute_batch(
-            "PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=30000;",
-        )
-        .map_err(db_err)?;
+        // Provider-specific: the sqlite backend opens the local file; the
+        // turso backend dispatches on TURSO_DATABASE_URL/LIBSQL_URL (remote /
+        // embedded replica / local). PRAGMAs likewise differ for remote.
+        let conn = super::open_backend(path)?;
+        super::apply_pragmas(&conn)?;
         init_db_with_dims(&conn, embedding_dims)?;
         Ok(Self {
             conn,
