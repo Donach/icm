@@ -13,8 +13,11 @@
 //!   replicas share one memory store.
 //! - **`opensearch`** — network-accessible OpenSearch (BM25 + `knn_vector`).
 //! - **`turso`** — network-accessible libSQL/Turso via the `libsql` async
-//!   client wrapped in a synchronous facade (`dbcompat`). Same SQL as
-//!   `backend-sqlite`; works with sqld/Turso remote databases.
+//!   client wrapped in a synchronous facade (`dbcompat`). Same SQL dialect
+//!   as `backend-sqlite`; works with sqld/Turso remote databases. Unlike
+//!   postgres/opensearch, this is the **first full-coverage network backend**:
+//!   it supports all of memoirs, concepts, transcripts, feedback, and facts
+//!   because it reuses the sqlite store verbatim over libsql.
 //!
 //! `icm-cli` / `icm-mcp` use the [`Store`] enum, which dispatches every
 //! call to whichever backend variant is active.
@@ -34,24 +37,27 @@ compile_error!(
 mod backend;
 mod common;
 
-#[cfg(feature = "backend-sqlite")]
-mod schema;
-#[cfg(feature = "backend-sqlite")]
-mod store;
-
 #[cfg(feature = "postgres")]
 mod postgres;
 
 #[cfg(feature = "opensearch")]
 mod opensearch;
 
+/// The dbcompat shim — must be declared before turso_backend so the
+/// `crate::dbcompat` path is available when turso_backend::sql re-exports it.
 #[cfg(feature = "turso")]
 #[macro_use]
 pub mod dbcompat;
+
+/// SQLite backend: wraps the shared store/schema with real rusqlite.
+/// File-based module so `#[path]` inside resolves relative to `src/`.
+#[cfg(feature = "backend-sqlite")]
+mod sqlite_backend;
+
+/// Turso/libSQL backend: wraps the shared store/schema with the dbcompat shim.
+/// File-based module so `#[path]` inside resolves relative to `src/`.
 #[cfg(feature = "turso")]
-mod turso_schema;
-#[cfg(feature = "turso")]
-mod turso_store;
+mod turso_backend;
 
 // Shared row types (backend-agnostic).
 pub use common::{CodeArea, HookEvent, HookEventInsert, HookStatsRow, PendingRow};
@@ -65,6 +71,7 @@ pub use opensearch::OpenSearchStore;
 #[cfg(feature = "postgres")]
 pub use postgres::PostgresStore;
 #[cfg(feature = "backend-sqlite")]
-pub use store::SqliteStore;
+pub use sqlite_backend::store::SqliteStore;
+/// TursoStore is the same SqliteStore struct, compiled with the libSQL sql provider.
 #[cfg(feature = "turso")]
-pub use turso_store::TursoStore;
+pub use turso_backend::store::SqliteStore as TursoStore;

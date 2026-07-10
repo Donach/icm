@@ -5,7 +5,9 @@ use std::sync::{Mutex, Once};
 
 use chrono::{DateTime, Utc};
 use lru::LruCache;
-use rusqlite::{ffi::sqlite3_auto_extension, params, Connection};
+use super::sql::{params, Connection};
+use super::sql::ffi::sqlite3_auto_extension;
+use super::sql;
 use sha2::{Digest, Sha256};
 use zerocopy::IntoBytes;
 
@@ -16,10 +18,10 @@ use icm_core::{
     StoreStats, TopicHealth, TranscriptHit, TranscriptStats, TranscriptStore,
 };
 
-use crate::schema::init_db_with_dims;
+use super::schema::init_db_with_dims;
 
-/// Convert rusqlite::Error to IcmError::Database
-pub(crate) fn db_err(e: rusqlite::Error) -> IcmError {
+/// Convert sql::Error to IcmError::Database
+pub(crate) fn db_err(e: sql::Error) -> IcmError {
     IcmError::Database(e.to_string())
 }
 
@@ -27,10 +29,11 @@ pub(crate) fn db_err(e: rusqlite::Error) -> IcmError {
 // compiled into one binary without colliding definitions (issue #301).
 pub use crate::common::{CodeArea, HookEvent, HookEventInsert, HookStatsRow, PendingRow};
 
-/// Collect mapped rows into a Vec, converting rusqlite errors.
-fn collect_rows<T>(
-    rows: rusqlite::MappedRows<'_, impl FnMut(&rusqlite::Row<'_>) -> rusqlite::Result<T>>,
-) -> IcmResult<Vec<T>> {
+/// Collect mapped rows into a Vec, converting database errors.
+/// Accepts any iterator of `sql::Result<T>` so the same function works for
+/// both the rusqlite backend (`MappedRows<'_, F>`) and the turso/dbcompat
+/// backend (`IntoIter<Result<T>>`), both of which implement `Iterator`.
+fn collect_rows<T>(rows: impl Iterator<Item = sql::Result<T>>) -> IcmResult<Vec<T>> {
     rows.collect::<Result<Vec<T>, _>>().map_err(db_err)
 }
 
@@ -72,9 +75,9 @@ fn open_readonly_immutable(path: &Path) -> IcmResult<Connection> {
     let uri = format!("file:{encoded}?mode=ro&immutable=1");
     Connection::open_with_flags(
         uri,
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY
-            | rusqlite::OpenFlags::SQLITE_OPEN_URI
-            | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        sql::OpenFlags::SQLITE_OPEN_READ_ONLY
+            | sql::OpenFlags::SQLITE_OPEN_URI
+            | sql::OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )
     .map_err(|e| IcmError::Database(format!("cannot open database read-only: {e}")))
 }
@@ -293,7 +296,7 @@ impl SqliteStore {
             .execute(
                 "INSERT INTO pending_extractions (id, project, tool_name, raw_output, captured_at)
                  VALUES (?1, ?2, ?3, ?4, ?5)",
-                rusqlite::params![id, project, tool_name, raw_output, now],
+                sql::params![id, project, tool_name, raw_output, now],
             )
             .map_err(db_err)?;
         Ok(id)
@@ -334,8 +337,8 @@ impl SqliteStore {
         }
         let placeholders = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
         let sql = format!("DELETE FROM pending_extractions WHERE id IN ({placeholders})");
-        let params: Vec<&dyn rusqlite::ToSql> =
-            ids.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
+        let params: Vec<&dyn sql::ToSql> =
+            ids.iter().map(|s| s as &dyn sql::ToSql).collect();
         let n = self.conn.execute(&sql, params.as_slice()).map_err(db_err)?;
         Ok(n)
     }
@@ -381,7 +384,7 @@ impl SqliteStore {
                     session_id = COALESCE(excluded.session_id, session_id),
                     tool_name = COALESCE(excluded.tool_name, tool_name),
                     description = COALESCE(excluded.description, description)",
-                rusqlite::params![project, file_path, description, session_id, tool_name, now],
+                sql::params![project, file_path, description, session_id, tool_name, now],
             )
             .map_err(db_err)?;
         Ok(())
@@ -404,7 +407,7 @@ impl SqliteStore {
              FROM code_areas
              WHERE 1=1",
         );
-        let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        let mut params: Vec<Box<dyn sql::ToSql>> = Vec::new();
         if let Some(p) = project {
             sql.push_str(" AND project = ?");
             params.push(Box::new(p.to_string()));
@@ -424,9 +427,9 @@ impl SqliteStore {
         params.push(Box::new(limit as i64));
 
         let mut stmt = self.conn.prepare(&sql).map_err(db_err)?;
-        let param_refs: Vec<&dyn rusqlite::ToSql> = params
+        let param_refs: Vec<&dyn sql::ToSql> = params
             .iter()
-            .map(|p| p.as_ref() as &dyn rusqlite::ToSql)
+            .map(|p| p.as_ref() as &dyn sql::ToSql)
             .collect();
         let rows = stmt
             .query_map(param_refs.as_slice(), |row| {
@@ -481,7 +484,7 @@ impl SqliteStore {
                  (ts, event, project, session_id, tool_name,
                   duration_ms, exit_code, payload_size, note)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-                rusqlite::params![
+                sql::params![
                     now,
                     ev.event,
                     ev.project,
@@ -505,7 +508,7 @@ impl SqliteStore {
         event_filter: Option<&str>,
     ) -> IcmResult<Vec<HookEvent>> {
         let limit_i64 = limit as i64;
-        let row_to_event = |row: &rusqlite::Row<'_>| -> rusqlite::Result<HookEvent> {
+        let row_to_event = |row: &sql::Row<'_>| -> sql::Result<HookEvent> {
             let ts_str: String = row.get(1)?;
             let ts = chrono::DateTime::parse_from_rfc3339(&ts_str)
                 .map(|t| t.with_timezone(&Utc))
@@ -537,7 +540,7 @@ impl SqliteStore {
                     )
                     .map_err(db_err)?;
                 let rows = stmt
-                    .query_map(rusqlite::params![e, limit_i64], row_to_event)
+                    .query_map(sql::params![e, limit_i64], row_to_event)
                     .map_err(db_err)?;
                 collect_rows(rows)
             }
@@ -553,7 +556,7 @@ impl SqliteStore {
                     )
                     .map_err(db_err)?;
                 let rows = stmt
-                    .query_map(rusqlite::params![limit_i64], row_to_event)
+                    .query_map(sql::params![limit_i64], row_to_event)
                     .map_err(db_err)?;
                 collect_rows(rows)
             }
@@ -630,7 +633,7 @@ impl SqliteStore {
             .conn
             .execute(
                 "DELETE FROM hook_events WHERE ts < ?1",
-                rusqlite::params![cutoff_rfc3339],
+                sql::params![cutoff_rfc3339],
             )
             .map_err(db_err)?;
         Ok(n)
@@ -746,7 +749,7 @@ fn blob_to_embedding(blob: &[u8]) -> Vec<f32> {
         .collect()
 }
 
-fn row_to_memory(row: &rusqlite::Row) -> rusqlite::Result<Memory> {
+fn row_to_memory(row: &sql::Row) -> sql::Result<Memory> {
     // Column order: id(0), created_at(1), updated_at(2), last_accessed(3),
     //   access_count(4), weight(5), topic(6), summary(7), raw_excerpt(8),
     //   keywords(9), importance(10), source_type(11), source_data(12),
@@ -1256,13 +1259,13 @@ impl MemoryStore for SqliteStore {
 
         let mut stmt = self.conn.prepare(&query).map_err(db_err)?;
 
-        let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = keywords
+        let mut param_values: Vec<Box<dyn sql::types::ToSql>> = keywords
             .iter()
-            .map(|k| Box::new(format!("%{k}%")) as Box<dyn rusqlite::types::ToSql>)
+            .map(|k| Box::new(format!("%{k}%")) as Box<dyn sql::types::ToSql>)
             .collect();
         param_values.push(Box::new(limit as i64));
 
-        let params_ref: Vec<&dyn rusqlite::types::ToSql> =
+        let params_ref: Vec<&dyn sql::types::ToSql> =
             param_values.iter().map(|p| p.as_ref()).collect();
 
         let rows = stmt
@@ -1337,9 +1340,9 @@ impl MemoryStore for SqliteStore {
         let mut stmt = self.conn.prepare(&sql).map_err(db_err)?;
 
         let ids: Vec<&str> = knn_rows.iter().map(|(id, _)| id.as_str()).collect();
-        let params: Vec<&dyn rusqlite::types::ToSql> = ids
+        let params: Vec<&dyn sql::types::ToSql> = ids
             .iter()
-            .map(|id| id as &dyn rusqlite::types::ToSql)
+            .map(|id| id as &dyn sql::types::ToSql)
             .collect();
 
         let rows = stmt.query_map(&*params, row_to_memory).map_err(db_err)?;
@@ -1470,13 +1473,13 @@ impl MemoryStore for SqliteStore {
             "UPDATE memories SET last_accessed = ?1, access_count = access_count + 1 WHERE id IN ({})",
             placeholders.join(", ")
         );
-        let mut params_vec: Vec<Box<dyn rusqlite::types::ToSql>> =
+        let mut params_vec: Vec<Box<dyn sql::types::ToSql>> =
             Vec::with_capacity(ids.len() + 1);
         params_vec.push(Box::new(now));
         for id in ids {
             params_vec.push(Box::new(id.to_string()));
         }
-        let refs: Vec<&dyn rusqlite::types::ToSql> =
+        let refs: Vec<&dyn sql::types::ToSql> =
             params_vec.iter().map(|p| p.as_ref()).collect();
         let changed = self.conn.execute(&sql, refs.as_slice()).map_err(db_err)?;
         self.cache_invalidate_many(ids);
@@ -1784,7 +1787,7 @@ fn parse_dt(s: &str) -> DateTime<Utc> {
         .unwrap_or_else(|_| Utc::now())
 }
 
-fn row_to_memoir(row: &rusqlite::Row) -> rusqlite::Result<Memoir> {
+fn row_to_memoir(row: &sql::Row) -> sql::Result<Memoir> {
     Ok(Memoir {
         id: row.get(0)?,
         name: row.get(1)?,
@@ -1797,7 +1800,7 @@ fn row_to_memoir(row: &rusqlite::Row) -> rusqlite::Result<Memoir> {
 
 const MEMOIR_COLS: &str = "id, name, description, created_at, updated_at, consolidation_threshold";
 
-fn row_to_concept(row: &rusqlite::Row) -> rusqlite::Result<Concept> {
+fn row_to_concept(row: &sql::Row) -> sql::Result<Concept> {
     let labels_json: String = row.get(4)?;
     let labels: Vec<Label> = serde_json::from_str(&labels_json).unwrap_or_default();
 
@@ -1821,7 +1824,7 @@ fn row_to_concept(row: &rusqlite::Row) -> rusqlite::Result<Concept> {
 const CONCEPT_COLS: &str = "id, memoir_id, name, definition, labels, confidence, \
                             revision, created_at, updated_at, source_memory_ids";
 
-fn row_to_link(row: &rusqlite::Row) -> rusqlite::Result<ConceptLink> {
+fn row_to_link(row: &sql::Row) -> sql::Result<ConceptLink> {
     let relation_str: String = row.get(3)?;
     let relation: Relation = relation_str.parse().unwrap_or(Relation::RelatedTo);
 
@@ -1841,7 +1844,7 @@ const LINK_COLS: &str = "id, source_id, target_id, relation, weight, created_at"
 // MemoirStore impl
 // ---------------------------------------------------------------------------
 
-use rusqlite::OptionalExtension;
+use super::sql::OptionalExtension;
 
 impl MemoirStore for SqliteStore {
     // --- Memoir CRUD ---
@@ -2433,7 +2436,7 @@ impl MemoirStore for SqliteStore {
 // Feedback helpers
 // ---------------------------------------------------------------------------
 
-fn row_to_feedback(row: &rusqlite::Row) -> rusqlite::Result<Feedback> {
+fn row_to_feedback(row: &sql::Row) -> sql::Result<Feedback> {
     Ok(Feedback {
         id: row.get(0)?,
         topic: row.get(1)?,
@@ -2488,7 +2491,7 @@ impl FeedbackStore for SqliteStore {
             return self.list_feedback(topic, limit);
         }
 
-        let (sql, params_vec): (String, Vec<Box<dyn rusqlite::types::ToSql>>) =
+        let (sql, params_vec): (String, Vec<Box<dyn sql::types::ToSql>>) =
             if let Some(t) = topic {
                 (
                     format!(
@@ -2498,7 +2501,7 @@ impl FeedbackStore for SqliteStore {
                      ORDER BY created_at DESC LIMIT ?3"
                     ),
                     vec![
-                        Box::new(sanitized) as Box<dyn rusqlite::types::ToSql>,
+                        Box::new(sanitized) as Box<dyn sql::types::ToSql>,
                         Box::new(t.to_string()),
                         Box::new(limit as i64),
                     ],
@@ -2511,14 +2514,14 @@ impl FeedbackStore for SqliteStore {
                      ORDER BY created_at DESC LIMIT ?2"
                     ),
                     vec![
-                        Box::new(sanitized) as Box<dyn rusqlite::types::ToSql>,
+                        Box::new(sanitized) as Box<dyn sql::types::ToSql>,
                         Box::new(limit as i64),
                     ],
                 )
             };
 
         let mut stmt = self.conn.prepare(&sql).map_err(db_err)?;
-        let refs: Vec<&dyn rusqlite::types::ToSql> =
+        let refs: Vec<&dyn sql::types::ToSql> =
             params_vec.iter().map(|p| p.as_ref()).collect();
         let rows = stmt
             .query_map(refs.as_slice(), row_to_feedback)
@@ -2527,7 +2530,7 @@ impl FeedbackStore for SqliteStore {
     }
 
     fn list_feedback(&self, topic: Option<&str>, limit: usize) -> IcmResult<Vec<Feedback>> {
-        let (sql, params_vec): (String, Vec<Box<dyn rusqlite::types::ToSql>>) = if let Some(t) =
+        let (sql, params_vec): (String, Vec<Box<dyn sql::types::ToSql>>) = if let Some(t) =
             topic
         {
             (
@@ -2535,19 +2538,19 @@ impl FeedbackStore for SqliteStore {
                         "SELECT {FEEDBACK_COLS} FROM feedback WHERE topic = ?1 ORDER BY created_at DESC LIMIT ?2"
                     ),
                     vec![
-                        Box::new(t.to_string()) as Box<dyn rusqlite::types::ToSql>,
+                        Box::new(t.to_string()) as Box<dyn sql::types::ToSql>,
                         Box::new(limit as i64),
                     ],
                 )
         } else {
             (
                 format!("SELECT {FEEDBACK_COLS} FROM feedback ORDER BY created_at DESC LIMIT ?1"),
-                vec![Box::new(limit as i64) as Box<dyn rusqlite::types::ToSql>],
+                vec![Box::new(limit as i64) as Box<dyn sql::types::ToSql>],
             )
         };
 
         let mut stmt = self.conn.prepare(&sql).map_err(db_err)?;
-        let refs: Vec<&dyn rusqlite::types::ToSql> =
+        let refs: Vec<&dyn sql::types::ToSql> =
             params_vec.iter().map(|p| p.as_ref()).collect();
         let rows = stmt
             .query_map(refs.as_slice(), row_to_feedback)
@@ -2624,7 +2627,7 @@ impl FeedbackStore for SqliteStore {
 // Structured facts (issue #273)
 // ---------------------------------------------------------------------------
 
-fn row_to_fact(row: &rusqlite::Row<'_>) -> rusqlite::Result<Fact> {
+fn row_to_fact(row: &sql::Row<'_>) -> sql::Result<Fact> {
     let created_at: String = row.get("created_at")?;
     let superseded_at: Option<String> = row.get("superseded_at")?;
     Ok(Fact {
@@ -2710,7 +2713,7 @@ impl FactsStore for SqliteStore {
             )
             .map(Some)
             .or_else(|e| match e {
-                rusqlite::Error::QueryReturnedNoRows => Ok(None),
+                sql::Error::QueryReturnedNoRows => Ok(None),
                 other => Err(db_err(other)),
             })?;
         Ok(row)
@@ -2833,7 +2836,7 @@ impl FactsStore for SqliteStore {
 // Transcripts (verbatim sessions + messages)
 // ---------------------------------------------------------------------------
 
-fn row_to_session(row: &rusqlite::Row<'_>) -> rusqlite::Result<Session> {
+fn row_to_session(row: &sql::Row<'_>) -> sql::Result<Session> {
     let started_at: String = row.get("started_at")?;
     let updated_at: String = row.get("updated_at")?;
     Ok(Session {
@@ -2846,7 +2849,7 @@ fn row_to_session(row: &rusqlite::Row<'_>) -> rusqlite::Result<Session> {
     })
 }
 
-fn row_to_message(row: &rusqlite::Row<'_>) -> rusqlite::Result<Message> {
+fn row_to_message(row: &sql::Row<'_>) -> sql::Result<Message> {
     let role_str: String = row.get("role")?;
     let ts: String = row.get("ts")?;
     let role = Role::parse(&role_str).unwrap_or(Role::Tool);
@@ -2908,7 +2911,7 @@ impl TranscriptStore for SqliteStore {
             )
             .map(Some)
             .or_else(|e| match e {
-                rusqlite::Error::QueryReturnedNoRows => Ok(None),
+                sql::Error::QueryReturnedNoRows => Ok(None),
                 other => Err(db_err(other)),
             })?;
         Ok(row)
@@ -3250,7 +3253,7 @@ impl TranscriptStore for SqliteStore {
             .prepare("SELECT role, COUNT(*) FROM messages GROUP BY role ORDER BY 2 DESC")
             .map_err(db_err)?;
         let by_role: Vec<(String, usize)> = stmt_role
-            .query_map([], |r: &rusqlite::Row<'_>| {
+            .query_map([], |r: &sql::Row<'_>| {
                 Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? as usize))
             })
             .map_err(db_err)?
@@ -3261,7 +3264,7 @@ impl TranscriptStore for SqliteStore {
             .prepare("SELECT agent, COUNT(*) FROM sessions GROUP BY agent ORDER BY 2 DESC")
             .map_err(db_err)?;
         let by_agent: Vec<(String, usize)> = stmt_agent
-            .query_map([], |r: &rusqlite::Row<'_>| {
+            .query_map([], |r: &sql::Row<'_>| {
                 Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? as usize))
             })
             .map_err(db_err)?
@@ -3275,7 +3278,7 @@ impl TranscriptStore for SqliteStore {
             )
             .map_err(db_err)?;
         let top_sessions: Vec<(String, usize)> = stmt_top
-            .query_map([], |r: &rusqlite::Row<'_>| {
+            .query_map([], |r: &sql::Row<'_>| {
                 Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? as usize))
             })
             .map_err(db_err)?
@@ -3286,7 +3289,7 @@ impl TranscriptStore for SqliteStore {
             .query_row(
                 "SELECT MIN(ts), MAX(ts) FROM messages",
                 [],
-                |r: &rusqlite::Row<'_>| {
+                |r: &sql::Row<'_>| {
                     let o: Option<String> = r.get(0)?;
                     let n: Option<String> = r.get(1)?;
                     Ok((o.as_deref().map(parse_ts), n.as_deref().map(parse_ts)))
@@ -3561,9 +3564,9 @@ impl SqliteStore {
         );
 
         let mut stmt = self.conn.prepare(&sql).map_err(db_err)?;
-        let params_vec: Vec<&dyn rusqlite::types::ToSql> = misses
+        let params_vec: Vec<&dyn sql::types::ToSql> = misses
             .iter()
-            .map(|s| s as &dyn rusqlite::types::ToSql)
+            .map(|s| s as &dyn sql::types::ToSql)
             .collect();
 
         let rows = stmt

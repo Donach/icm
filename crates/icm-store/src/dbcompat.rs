@@ -357,6 +357,14 @@ pub struct Connection {
 }
 
 impl Connection {
+    /// Stub for `rusqlite::Connection::open_with_flags` — not used at runtime
+    /// by the libSQL backend (`open_readonly_immutable` is never called when
+    /// the turso feature is active) but must compile as shared store.rs code.
+    #[allow(dead_code)]
+    pub fn open_with_flags<P: AsRef<Path>>(path: P, _flags: OpenFlags) -> Result<Self> {
+        Self::open(path)
+    }
+
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
         let db = block_on(async { Builder::new_local(path.as_ref().to_path_buf()).build().await })?;
         // First connect runs libsql's one-time threading config + sqlite init;
@@ -467,6 +475,34 @@ impl<T> OptionalExtension<T> for Result<T> {
             Err(Error::QueryReturnedNoRows) => Ok(None),
             Err(e) => Err(e),
         }
+    }
+}
+
+// ───────────────────────────── rusqlite compat stubs ─────────────────────────────
+
+/// Stub for `rusqlite::OpenFlags` — not used by the libSQL backend at runtime
+/// (we always open via `open_connection`), but store.rs references the type
+/// in `open_readonly_immutable` which is compiled in both contexts.
+#[allow(non_camel_case_types, dead_code)]
+pub struct OpenFlags(u32);
+impl OpenFlags {
+    pub const SQLITE_OPEN_READ_ONLY: Self = Self(1);
+    pub const SQLITE_OPEN_URI: Self = Self(64);
+    pub const SQLITE_OPEN_NO_MUTEX: Self = Self(32768);
+}
+impl std::ops::BitOr for OpenFlags {
+    type Output = Self;
+    fn bitor(self, rhs: Self) -> Self { Self(self.0 | rhs.0) }
+}
+
+/// Stub for `rusqlite::ffi::sqlite3_auto_extension` — the real call is handled
+/// inside `register_vec_after_init()` above; this no-op satisfies the import in
+/// `store.rs`'s `ensure_sqlite_vec()` when compiled with the turso feature.
+pub mod ffi {
+    #[allow(dead_code)]
+    pub unsafe fn sqlite3_auto_extension(_f: Option<unsafe extern "C" fn()>) {
+        // No-op: the libSQL backend registers sqlite-vec via
+        // `register_vec_after_init()` in dbcompat::Connection::open.
     }
 }
 
