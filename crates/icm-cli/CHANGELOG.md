@@ -1,5 +1,101 @@
 # Changelog
 
+## [0.10.61](https://github.com/rtk-ai/icm/compare/icm-v0.10.60...icm-v0.10.61) (2026-07-28)
+
+
+### Features
+
+* **feedback:** add semantic search fallback (icm_feedback_search) ([#404](https://github.com/rtk-ai/icm/issues/404)) ([ca5af46](https://github.com/rtk-ai/icm/commit/ca5af46a64c3e10834278b53f75b59fc3f2dcdf2))
+
+
+### Bug Fixes
+
+* **consolidate:** attach embeddings to the merged memory, CLI + MCP ([#400](https://github.com/rtk-ai/icm/issues/400)) ([dc8fc4b](https://github.com/rtk-ai/icm/commit/dc8fc4b41c648bc9c38b4b2bea46fd18dc002307))
+* **http-api:** attach an embedding to /consolidate's merged memory ([#402](https://github.com/rtk-ai/icm/issues/402)) ([bd9de1a](https://github.com/rtk-ai/icm/commit/bd9de1a4fc509554e086a19be06113c1a9e7cd5f))
+* **tui:** attach an embedding to the consolidate action's merged memory ([#403](https://github.com/rtk-ai/icm/issues/403)) ([cc4f46d](https://github.com/rtk-ai/icm/commit/cc4f46d96426b947bd40cbe3fa839603fa8fef04))
+
+## [0.10.60](https://github.com/rtk-ai/icm/compare/icm-v0.10.59...icm-v0.10.60) (2026-07-27)
+
+
+### Features
+
+* **embeddings:** Windows onnxruntime download + dll pre-flight ([#345](https://github.com/rtk-ai/icm/issues/345)) ([#351](https://github.com/rtk-ai/icm/issues/351)) ([f9d3745](https://github.com/rtk-ai/icm/commit/f9d37456625036ca7e321b540924fa675da98a3f))
+
+
+### Bug Fixes
+
+* **cli:** compare versions numerically and report rollback failures accurately in icm upgrade ([#386](https://github.com/rtk-ai/icm/issues/386)) ([c1003a3](https://github.com/rtk-ai/icm/commit/c1003a3d3fc8b63a1f80b591ac5d3d3d4ab3e443))
+* **cli:** flatten embedded newlines in list/recall/briefing output ([#379](https://github.com/rtk-ai/icm/issues/379)) ([087441d](https://github.com/rtk-ai/icm/commit/087441db1fc5803bbe504f91f99e9bd3496a3ac1))
+* **cli:** harden upgrade binary write and import directory walk ([#377](https://github.com/rtk-ai/icm/issues/377)) ([10f7ef8](https://github.com/rtk-ai/icm/commit/10f7ef8b1d04372d4e32b47b24b6645b12db3126))
+* **cli:** warn when an explicitly-set ICM_CONFIG path does not exist ([#388](https://github.com/rtk-ai/icm/issues/388)) ([1018123](https://github.com/rtk-ai/icm/commit/10181237244d7de44f8e5b4118aa451c22babb01))
+* **cli:** write config/backup/manifest files atomically ([#381](https://github.com/rtk-ai/icm/issues/381)) ([0e4947b](https://github.com/rtk-ai/icm/commit/0e4947bbb84ddee412d4f8b2cf2366b4b27484e9))
+* **cloud:** percent-encode the `since` query parameter ([#382](https://github.com/rtk-ai/icm/issues/382)) ([fd96e72](https://github.com/rtk-ai/icm/commit/fd96e72ab324f124db5f787a68bc744f8388c26d))
+* **cloud:** stop pull from destroying local data, close OAuth CSRF + TOCTOU + cleartext gaps ([#362](https://github.com/rtk-ai/icm/issues/362)) ([4c34d13](https://github.com/rtk-ai/icm/commit/4c34d139ce0e9b67ce13e771aff00996ab73ee3b))
+* **embeddings:** don't follow a pre-existing symlink when writing the downloaded onnxruntime library ([#389](https://github.com/rtk-ai/icm/issues/389)) ([7282272](https://github.com/rtk-ai/icm/commit/72822726fad643457dc98ea322c7bf32315a8eba))
+* **extract-pending:** fall back to fastembed on LLM runtime failure too ([#395](https://github.com/rtk-ai/icm/issues/395)) ([3bd8faa](https://github.com/rtk-ai/icm/commit/3bd8faa84ea266c16b3808b3907d59edcbb5a3e1))
+* **extract:** attach the embedder's vector to extracted facts ([#394](https://github.com/rtk-ai/icm/issues/394)) ([625d630](https://github.com/rtk-ai/icm/commit/625d630747862530ab457ca71842c959b2c8cc94))
+* **extract:** bound entity/fact extraction cost, fix classify_fact substring matches ([#383](https://github.com/rtk-ai/icm/issues/383)) ([81ff9b1](https://github.com/rtk-ai/icm/commit/81ff9b17f4de248ae2697e02cd4199c30c9f8bd4))
+* **extract:** flatten embedded newlines in recall_context, fix false trust-boundary claim ([#361](https://github.com/rtk-ai/icm/issues/361)) ([58724d0](https://github.com/rtk-ai/icm/commit/58724d079488653b4dda5661b27b2388e329dacc))
+* **extract:** harden the semantic scorer against dimension mismatch and non-finite similarity ([#385](https://github.com/rtk-ai/icm/issues/385)) ([d96c93a](https://github.com/rtk-ai/icm/commit/d96c93a230177ec71f3a941d8fec5a4cdc39ca86))
+* **extract:** word-boundary keyword matching, cap consolidation prompt input, strip embedding from JSON recall ([#367](https://github.com/rtk-ai/icm/issues/367)) ([352d069](https://github.com/rtk-ai/icm/commit/352d069e22a4b271ef64718a5ccc0d15a263236b))
+* **hooks:** cap inline extraction input size ([#380](https://github.com/rtk-ai/icm/issues/380)) ([e850646](https://github.com/rtk-ai/icm/commit/e850646bbb8184454d97ffae82bbed9f0eafd290))
+* **http-api:** recover from a poisoned store mutex instead of dying permanently ([#374](https://github.com/rtk-ai/icm/issues/374)) ([dd57873](https://github.com/rtk-ai/icm/commit/dd578730556e0303b89a8af2361d0a63c8973060))
+* **http:** refuse non-loopback bind without a token, constant-time auth compares ([#360](https://github.com/rtk-ai/icm/issues/360)) ([9087a53](https://github.com/rtk-ai/icm/commit/9087a53d2096e9a9f2c563fe2ca15a2acf0d6b51))
+* **import:** use the semantic multilingual scorer when an embedder is available ([#391](https://github.com/rtk-ai/icm/issues/391)) ([283c37b](https://github.com/rtk-ai/icm/commit/283c37b8d2df1bc5f336440cbe332ab5123ae2f2))
+* **learn:** dedupe dependency names, block workspace-member path traversal ([#369](https://github.com/rtk-ai/icm/issues/369)) ([dfbbe98](https://github.com/rtk-ai/icm/commit/dfbbe98fc69592fc8dd47bf6920e7e383850f256))
+* **mcp:** keep stdout protocol-pure, cap stdin during read, share project detection ([#355](https://github.com/rtk-ai/icm/issues/355)) ([69ef05b](https://github.com/rtk-ai/icm/commit/69ef05bffb4ac5d127c3bbbc5c142d3832c3b562))
+* **memoir:** escape LIKE wildcards, cap refine definition, escape DOT export ([#370](https://github.com/rtk-ai/icm/issues/370)) ([4bbe55c](https://github.com/rtk-ai/icm/commit/4bbe55cc2b2d5df2c11d29bd4874899e6d0ad06e))
+* **recall:** un-invert BM25 scoring, fix dedup + importance downgrade, fix MCP filter-after-limit ([#363](https://github.com/rtk-ai/icm/issues/363)) ([833a8d8](https://github.com/rtk-ai/icm/commit/833a8d862c2925a5aa0073de8b4c17c174991580))
+* **store:** clean up dangling related_ids on consolidate too, all 3 backends ([#393](https://github.com/rtk-ai/icm/issues/393)) ([f90ea45](https://github.com/rtk-ai/icm/commit/f90ea453d68198d32463ede043daf006b03d4e79))
+* **summarizer:** fix subprocess pipe-deadlock in CLI-shelling providers ([#375](https://github.com/rtk-ai/icm/issues/375)) ([51b6ac4](https://github.com/rtk-ai/icm/commit/51b6ac4a36a133044913775d3e8018b582b5e31d))
+* **tui:** clamp overlay rects to the frame, restore terminal on panic and early error ([#364](https://github.com/rtk-ai/icm/issues/364)) ([35ceb10](https://github.com/rtk-ai/icm/commit/35ceb10122cafd5e9cfda2ea14a73f6234d7d481))
+* **tui:** stop showing stale/wrong data after actions and navigation ([#373](https://github.com/rtk-ai/icm/issues/373)) ([2f84687](https://github.com/rtk-ai/icm/commit/2f84687ec5e978ee3c60e83f2526c49e42763ea4))
+* **uninstall:** don't silently skip the --purge-data safety check ([#378](https://github.com/rtk-ai/icm/issues/378)) ([36064ff](https://github.com/rtk-ai/icm/commit/36064ff47b77cd72f41a017e7c666009f2c51940))
+* **uninstall:** flag ambiguous markdown blocks instead of guessing, use hardened hook matcher ([#366](https://github.com/rtk-ai/icm/issues/366)) ([992040c](https://github.com/rtk-ai/icm/commit/992040c05866e1365d6a79085a0d551f779a33cc))
+* **web:** block CSRF on decay/prune/consolidate, fix credentials TOCTOU ([#372](https://github.com/rtk-ai/icm/issues/372)) ([17f7aa9](https://github.com/rtk-ai/icm/commit/17f7aa9c0acfd20a50630b0b658fce77712b99fc))
+* **web:** recover from a poisoned store mutex instead of cascading panics ([#357](https://github.com/rtk-ai/icm/issues/357)) ([8f913a9](https://github.com/rtk-ai/icm/commit/8f913a9a01d2718146cc61b2086b9b74df250b38))
+
+## [0.10.59](https://github.com/rtk-ai/icm/compare/icm-v0.10.58...icm-v0.10.59) (2026-07-25)
+
+
+### Features
+
+* **embeddings:** add load-dynamic ort variant for homebrew-core builds ([#345](https://github.com/rtk-ai/icm/issues/345)) ([#346](https://github.com/rtk-ai/icm/issues/346)) ([fe2fdcb](https://github.com/rtk-ai/icm/commit/fe2fdcbf4c8c77e742d8d5ae7786e698aeb4288c))
+* **embeddings:** first-launch opt-in onnxruntime download for load-dynamic build ([#345](https://github.com/rtk-ai/icm/issues/345)) ([#348](https://github.com/rtk-ai/icm/issues/348)) ([2b1d6e7](https://github.com/rtk-ai/icm/commit/2b1d6e7e387636cc6c6c5af93d5063e2cd563e96))
+
+## [0.10.58](https://github.com/rtk-ai/icm/compare/icm-v0.10.57...icm-v0.10.58) (2026-07-24)
+
+
+### Features
+
+* **consolidate:** add `icm consolidate-all` for batch/cron rollups ([#179](https://github.com/rtk-ai/icm/issues/179)) ([b9b4d21](https://github.com/rtk-ai/icm/commit/b9b4d212a3e5ec55579d33c827c1d26c5297ce66))
+* **consolidate:** add `icm consolidate-all` for batch/cron rollups ([#179](https://github.com/rtk-ai/icm/issues/179)) ([6d7858c](https://github.com/rtk-ai/icm/commit/6d7858c021c3ab411905841b2495ca49a890cb49))
+* **hooks:** add `icm hook disable` ([#268](https://github.com/rtk-ai/icm/issues/268)) ([9c8c802](https://github.com/rtk-ai/icm/commit/9c8c80228f614fa0656b8e2b16e7770dd5cffa38))
+* **hooks:** add `icm hook disable` to remove ICM hooks ([#268](https://github.com/rtk-ai/icm/issues/268)) ([1c0c35f](https://github.com/rtk-ai/icm/commit/1c0c35f8209b97ea04f70a21597a16576aae9960))
+* **hooks:** note reformatting/comment-drop in hook disable output ([098d54a](https://github.com/rtk-ai/icm/commit/098d54a1ff85d79f2a538f702a535137c7956e1f))
+* **store:** `icm repair` + database integrity in `icm doctor` ([#313](https://github.com/rtk-ai/icm/issues/313)) ([48a1512](https://github.com/rtk-ai/icm/commit/48a15126ff9291e0d12cf7bd4c5a1817cf41d289))
+* **store:** icm repair + database integrity in icm doctor ([#313](https://github.com/rtk-ai/icm/issues/313)) ([ab80b04](https://github.com/rtk-ai/icm/commit/ab80b04d476a91c68290477cfec8baf23385543a))
+* **wake-up:** LLM-summarized briefing, cached + loaded at session start ([#165](https://github.com/rtk-ai/icm/issues/165)) ([f48fd7e](https://github.com/rtk-ai/icm/commit/f48fd7e3f81daf82c08911e31b2905f8087a78fc))
+* **wake-up:** LLM-summarized briefing, cached and loaded at session start ([#165](https://github.com/rtk-ai/icm/issues/165)) ([ba17fcb](https://github.com/rtk-ai/icm/commit/ba17fcb84b4c126614b798e2be13111e45e8422b))
+
+
+### Bug Fixes
+
+* **consolidate:** guard consolidate-all against lexical-by-default and threshold 0 ([67dd838](https://github.com/rtk-ai/icm/commit/67dd838db5d559a8f17e954ad86c0ad4fbdb0b17))
+* **hooks:** harden ICM-hook detection + cap hook stdin (security review) ([c5e43b2](https://github.com/rtk-ai/icm/commit/c5e43b23699bb232174eb40a379501360b261fc2))
+* **hooks:** harden ICM-hook detection + cap hook stdin (security review) ([e551c27](https://github.com/rtk-ai/icm/commit/e551c27814df67a74dd3520357faa1367b6160ee))
+* **hooks:** stop SessionEnd from spawning a self-sustaining claude -p loop ([#322](https://github.com/rtk-ai/icm/issues/322)) ([b2bb71d](https://github.com/rtk-ai/icm/commit/b2bb71d4a36786677f451aed3c1f2ab0e61b1a61))
+* **hooks:** stop SessionEnd self-sustaining `claude -p` spawn loop ([#322](https://github.com/rtk-ai/icm/issues/322)) ([e24961f](https://github.com/rtk-ai/icm/commit/e24961f323d9b8ec94cddb8cbacda3a6c5eded72))
+* **mcp:** honor auto_consolidate config on MCP store path ([#318](https://github.com/rtk-ai/icm/issues/318)) ([fea20f9](https://github.com/rtk-ai/icm/commit/fea20f91e3ac1cffb19eb742b98a1ebf44f3e8d2))
+* **mcp:** honor auto_consolidate config on the MCP store path ([#318](https://github.com/rtk-ai/icm/issues/318)) ([1accc36](https://github.com/rtk-ai/icm/commit/1accc36675d68ce28c33e4c409e528600408a640))
+* **recall:** keyword-OR fallback when FTS AND-match misses natural-language queries ([bd3a0f1](https://github.com/rtk-ai/icm/commit/bd3a0f187cb5020f6ea57a58fca2b3e309796226))
+* **recall:** keyword-OR fallback when FTS AND-match misses natural-language queries ([c54ffbe](https://github.com/rtk-ai/icm/commit/c54ffbe14a30a6591a25e738db978c33e5713add))
+* **recall:** rank keyword-fallback candidates by relevance, add cross-project coverage ([b934509](https://github.com/rtk-ai/icm/commit/b934509c9a8081c3a37ac3389eeb2227de3182ca))
+* **store:** detect FTS index/content desync (rank=1) + backup robustness ([#313](https://github.com/rtk-ai/icm/issues/313)) ([d16f3c1](https://github.com/rtk-ai/icm/commit/d16f3c171c0e3e44c1cfacdd211ee2c98edda8df))
+* **store:** make `icm doctor` and `repair --dry-run` truly read-only ([#313](https://github.com/rtk-ai/icm/issues/313)) ([af2cbc3](https://github.com/rtk-ai/icm/commit/af2cbc34938515bbd54e123d1065bd84e194302f))
+* **store:** make icm doctor and repair --dry-run truly read-only ([#313](https://github.com/rtk-ai/icm/issues/313)) ([bdc955a](https://github.com/rtk-ai/icm/commit/bdc955a0cefe1cf7e5354d70ca78238b3524abda))
+* **wake-up:** don't let a stale briefing cache mask an empty store ([#165](https://github.com/rtk-ai/icm/issues/165)) ([8bf702c](https://github.com/rtk-ai/icm/commit/8bf702c6f996e86356728e753c654a1d5199683e))
+
 ## [0.10.57](https://github.com/rtk-ai/icm/compare/icm-v0.10.56...icm-v0.10.57) (2026-06-24)
 
 

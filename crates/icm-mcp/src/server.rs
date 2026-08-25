@@ -1,4 +1,4 @@
-use std::io::{self, BufRead, Write};
+use std::io::{self, BufRead, Read, Write};
 
 use serde_json::{json, Value};
 use tracing::{debug, error};
@@ -7,7 +7,7 @@ use icm_core::Embedder;
 use icm_store::Store;
 
 use crate::protocol::{JsonRpcMessage, JsonRpcResponse};
-use crate::tools;
+use crate::tools::{self, AutoConsolidate};
 
 const SERVER_NAME: &str = "icm";
 const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -16,42 +16,79 @@ const PROTOCOL_VERSION: &str = "2024-11-05";
 /// Number of non-store tool calls before we nudge the agent to store.
 const STORE_NUDGE_THRESHOLD: u32 = 10;
 
-/// Maximum allowed line length (10 MB). Lines exceeding this are rejected
-/// without parsing to prevent memory exhaustion.
+/// Maximum allowed line length (10 MB). The cap is enforced *while reading*
+/// (bounded `take` + `read_until`), so an oversized line is never fully
+/// buffered — previously the whole line was allocated by `lines()` before
+/// the length check ran, defeating the cap (audit finding; same class of
+/// bug as the CLI hook-stdin fix in e551c27).
 const MAX_LINE_LEN: usize = 10 * 1024 * 1024;
+
+/// Read one `\n`-terminated line into `buf` without ever buffering more than
+/// `MAX_LINE_LEN + 1` bytes of it. Returns `Ok(None)` on EOF, `Ok(Some(true))`
+/// for a within-limit line, `Ok(Some(false))` for an oversized line (whose
+/// remainder has been drained and discarded in bounded chunks).
+fn read_capped_line(reader: &mut impl BufRead, buf: &mut Vec<u8>) -> io::Result<Option<bool>> {
+    buf.clear();
+    let n = reader
+        .take(MAX_LINE_LEN as u64 + 1)
+        .read_until(b'\n', buf)?;
+    if n == 0 {
+        return Ok(None); // EOF
+    }
+    // Oversized iff we exhausted the read budget without hitting the newline.
+    if buf.last() != Some(&b'\n') && n == MAX_LINE_LEN + 1 {
+        // Drain the rest of the line in bounded chunks so the next read
+        // starts on a fresh line.
+        let mut scratch = Vec::with_capacity(64 * 1024);
+        loop {
+            scratch.clear();
+            let m = reader.take(1024 * 1024).read_until(b'\n', &mut scratch)?;
+            if m == 0 || scratch.last() == Some(&b'\n') {
+                break;
+            }
+        }
+        return Ok(Some(false));
+    }
+    Ok(Some(true))
+}
 
 /// Run the MCP server on stdio. Blocks until stdin is closed.
 pub fn run_server(
     store: &Store,
     embedder: Option<&dyn Embedder>,
     compact: bool,
+    auto_consolidate: AutoConsolidate,
 ) -> anyhow::Result<()> {
     let stdin = io::stdin();
+    let mut reader = stdin.lock();
     let mut stdout = io::stdout();
     let mut calls_since_store: u32 = 0;
+    let mut buf: Vec<u8> = Vec::new();
 
-    for line in stdin.lock().lines() {
-        let line = match line {
-            Ok(l) => l,
+    loop {
+        let within_limit = match read_capped_line(&mut reader, &mut buf) {
+            Ok(Some(ok)) => ok,
+            Ok(None) => break, // EOF
             Err(e) => {
                 error!("stdin read error: {e}");
                 break;
             }
         };
 
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-
-        if line.len() > MAX_LINE_LEN {
-            error!("line too long: {} bytes (max {MAX_LINE_LEN})", line.len());
+        if !within_limit {
+            error!("line too long (max {MAX_LINE_LEN} bytes)");
             let resp = JsonRpcResponse::err(
                 Value::Null,
                 -32600,
-                format!("line too long: {} bytes (max {MAX_LINE_LEN})", line.len()),
+                format!("line too long (max {MAX_LINE_LEN} bytes)"),
             );
             write_response(&mut stdout, &resp)?;
+            continue;
+        }
+
+        let line_owned = String::from_utf8_lossy(&buf);
+        let line = line_owned.trim();
+        if line.is_empty() {
             continue;
         }
 
@@ -66,34 +103,49 @@ pub fn run_server(
             }
         };
 
-        let method = msg.method.as_deref().unwrap_or("");
-        debug!("MCP request: {method}");
-
-        // Notifications have no id — don't respond
-        let id = match msg.id {
-            Some(id) => id,
-            None => continue,
-        };
-
-        let response = match method {
-            "initialize" => handle_initialize(id),
-            "ping" => JsonRpcResponse::ok(id, json!({})),
-            "tools/list" => handle_tools_list(id, embedder.is_some()),
-            "tools/call" => handle_tools_call(
-                id,
-                &msg.params,
-                store,
-                embedder,
-                compact,
-                &mut calls_since_store,
-            ),
-            other => JsonRpcResponse::method_not_found(id, other),
-        };
-
-        write_response(&mut stdout, &response)?;
+        if let Some(response) = handle_json_rpc_message(
+            msg,
+            store,
+            embedder,
+            compact,
+            auto_consolidate,
+            &mut calls_since_store,
+        ) {
+            write_response(&mut stdout, &response)?;
+        }
     }
 
     Ok(())
+}
+
+pub fn handle_json_rpc_message(
+    msg: JsonRpcMessage,
+    store: &Store,
+    embedder: Option<&dyn Embedder>,
+    compact: bool,
+    auto_consolidate: AutoConsolidate,
+    calls_since_store: &mut u32,
+) -> Option<JsonRpcResponse> {
+    let method = msg.method.as_deref().unwrap_or("");
+    debug!("MCP request: {method}");
+
+    let id = msg.id?;
+
+    Some(match method {
+        "initialize" => handle_initialize(id),
+        "ping" => JsonRpcResponse::ok(id, json!({})),
+        "tools/list" => handle_tools_list(id, embedder.is_some()),
+        "tools/call" => handle_tools_call(
+            id,
+            &msg.params,
+            store,
+            embedder,
+            compact,
+            auto_consolidate,
+            calls_since_store,
+        ),
+        other => JsonRpcResponse::method_not_found(id, other),
+    })
 }
 
 fn write_response(stdout: &mut io::Stdout, resp: &JsonRpcResponse) -> anyhow::Result<()> {
@@ -149,6 +201,7 @@ fn handle_tools_call(
     store: &Store,
     embedder: Option<&dyn Embedder>,
     compact: bool,
+    auto_consolidate: AutoConsolidate,
     calls_since_store: &mut u32,
 ) -> JsonRpcResponse {
     let params = match params {
@@ -174,10 +227,17 @@ fn handle_tools_call(
         *calls_since_store += 1;
     }
 
-    let mut result = tools::call_tool(store, embedder, tool_name, &args, compact);
+    let mut result =
+        tools::call_tool_with_config(store, embedder, tool_name, &args, compact, auto_consolidate);
 
-    // Nudge: append a store reminder if too many calls without storing
-    if *calls_since_store >= STORE_NUDGE_THRESHOLD && tool_name != "icm_memory_store" {
+    // Nudge: remind the agent to store on every THRESHOLD-th call without a
+    // store (10, 20, 30, …) — previously the hint was appended to *every*
+    // response past the threshold, a recurring token tax on the client LLM
+    // (audit finding).
+    if tool_name != "icm_memory_store"
+        && *calls_since_store >= STORE_NUDGE_THRESHOLD
+        && calls_since_store.is_multiple_of(STORE_NUDGE_THRESHOLD)
+    {
         result.append_hint(&format!(
             "\n[ICM: {} tool calls since last store. \
              Consider saving important context with icm_memory_store before it is lost.]",

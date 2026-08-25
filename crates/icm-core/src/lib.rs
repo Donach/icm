@@ -1,3 +1,17 @@
+// The `embeddings` feature carries only the embedder code + model download; an
+// onnxruntime backend must be selected explicitly (issue #345). Enabling bare
+// `embeddings` would build `fastembed` with no ort backend — a confusing link
+// error or a runtime with no way to load onnxruntime — so fail loudly here.
+#[cfg(all(
+    feature = "embeddings",
+    not(any(feature = "embeddings-static", feature = "embeddings-dynamic"))
+))]
+compile_error!(
+    "the `embeddings` feature needs an onnxruntime backend: enable \
+     `embeddings-static` (build-time download) or `embeddings-dynamic` \
+     (runtime load-dynamic), not bare `embeddings`. See issue #345."
+);
+
 pub mod auto_link;
 pub mod context_snapshot;
 pub mod embedder;
@@ -12,6 +26,7 @@ pub mod learn;
 pub mod memoir;
 pub mod memoir_store;
 pub mod memory;
+pub mod project;
 pub mod store;
 pub mod transcript;
 pub mod transcript_store;
@@ -36,7 +51,8 @@ pub use feedback_store::FeedbackStore;
 pub use memoir::{Concept, ConceptLink, Label, Memoir, MemoirStats, Relation};
 pub use memoir_store::MemoirStore;
 pub use memory::{
-    Importance, Memory, MemorySource, PatternCluster, Scope, StoreStats, TopicHealth,
+    max_importance, Importance, Memory, MemorySource, PatternCluster, Scope, StoreStats,
+    TopicHealth,
 };
 pub use store::{find_similar_memory, MemoryStore, DEDUP_SIMILARITY_THRESHOLD};
 pub use transcript::{Message, Role, Session, TranscriptHit, TranscriptStats};
